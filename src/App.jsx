@@ -2,10 +2,12 @@ import { useState, useEffect, useMemo } from "react";
 import { createClient } from "@supabase/supabase-js";
 import "./App.css";
 
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY — copy .env.example to .env and fill in the values.");
+}
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 const C = {
   navy:"#0f172a",mid:"#1e293b",light:"#334155",
@@ -50,6 +52,15 @@ const BLOCKER_TYPES = [
 ];
 
 const WAITING_KEYS = ["waiting_strategist","waiting_client","waiting_asset","waiting_developer","vendor_delay","dependency_incomplete"];
+
+const DESIGNATIONS = ["founder","strategist","project manager","digital creator","developer","designer"];
+
+function isAdminRole(role) {
+  return ["admin","founder","strategist"].includes(role);
+}
+function isSupervisorRole(role, isSup) {
+  return !!isSup || ["admin","founder","strategist","project manager","supervisor"].includes(role);
+}
 
 function mapTask(row) {
   return {
@@ -99,6 +110,11 @@ function projectToRow(p) {
   };
 }
 
+function toMs(v) {
+  if(!v) return null;
+  const n=typeof v==="number"?v:Number(v);
+  return isNaN(n)?new Date(v).getTime():n;
+}
 function computeHealth(projectId, tasks) {
   const pt=tasks.filter(t=>t.projectId===projectId);
   const hasP0Crisis=pt.some(t=>["P0","P1"].includes(t.priority)&&["overdue","stuck"].includes(t.status));
@@ -109,8 +125,9 @@ function computeHealth(projectId, tasks) {
 }
 function isStale(task) {
   if(task.status==="done"||task.due==="TBD") return false;
-  if(!task.lastUpdatedAt) return ["P0","P1"].includes(task.priority)&&task.status==="pending";
-  return (Date.now()-task.lastUpdatedAt)/864e5>(PRI[task.priority]?.staleDays||7);
+  const ms=toMs(task.lastUpdatedAt);
+  if(!ms) return ["P0","P1"].includes(task.priority)&&task.status==="pending";
+  return (Date.now()-ms)/864e5>(PRI[task.priority]?.staleDays||7);
 }
 function todayStr() {
   return new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
@@ -120,8 +137,9 @@ function sortByPriority(tasks) {
   return [...tasks].sort((a,b)=>(order[a.priority]||4)-(order[b.priority]||4));
 }
 function getBlockerDays(bs) {
-  if(!bs) return null;
-  return Math.floor((Date.now()-bs)/864e5);
+  const ms=toMs(bs);
+  if(!ms) return null;
+  return Math.floor((Date.now()-ms)/864e5);
 }
 function blockerAgeColor(d) {
   if(d===null||d===undefined) return C.slate;
@@ -134,8 +152,8 @@ function blockerAgeLabel(d) {
   return `Blocked ${d} days`;
 }
 function genTaskId(projectId, tasks) {
-  const n=tasks.filter(t=>t.projectId===projectId).length;
-  return `${projectId}-T${n+1}`;
+  const nums=tasks.filter(t=>t.projectId===projectId).map(t=>parseInt(t.id.split("-T")[1])||0);
+  return `${projectId}-T${Math.max(0,...nums)+1}`;
 }
 function genProjectId(projects) {
   const used=projects.map(p=>p.id);
@@ -209,7 +227,7 @@ function Field({label,children,required}) {
   );
 }
 
-function LoginScreen() {
+function LoginScreen({onSwitch}) {
   const [email,setEmail]=useState("");
   const [password,setPassword]=useState("");
   const [error,setError]=useState("");
@@ -232,6 +250,102 @@ function LoginScreen() {
         <input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={{padding:"14px 16px",borderRadius:12,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,outline:"none"}}/>
         {error&&<div style={{color:C.red,fontSize:13,textAlign:"center"}}>{error}</div>}
         <button onClick={handleLogin} disabled={loading} style={{padding:"14px",borderRadius:12,background:C.accent,color:"#fff",fontWeight:800,fontSize:15,border:"none",cursor:"pointer",marginTop:4}}>{loading?"Signing in...":"Sign In"}</button>
+        <div style={{textAlign:"center",marginTop:4}}>
+          <span style={{color:"rgba(255,255,255,0.4)",fontSize:14}}>No account? </span>
+          <span onClick={onSwitch} style={{color:C.accent,fontWeight:700,fontSize:14,cursor:"pointer"}}>Create one</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SignUpScreen({onSwitch}) {
+  const [name,setName]=useState("");
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [confirmPassword,setConfirmPassword]=useState("");
+  const [error,setError]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [done,setDone]=useState(false);
+
+  const emailRegex=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const validate=()=>{
+    if(!name.trim()||name.trim().length<2) return "Name must be at least 2 characters.";
+    if(!email.trim()||!emailRegex.test(email.trim())) return "Enter a valid email address.";
+    if(password.length<6) return "Password must be at least 6 characters.";
+    if(password!==confirmPassword) return "Passwords do not match.";
+    return null;
+  };
+
+  const handleSignUp=async()=>{
+    const validErr=validate();
+    if(validErr){setError(validErr);return;}
+    setLoading(true);setError("");
+
+    const normalizedEmail=email.trim().toLowerCase();
+
+    // Check if email already exists (uses a security-definer RPC to bypass RLS)
+    const{data:exists}=await supabase.rpc("email_exists",{check_email:normalizedEmail});
+    if(exists){
+      setError("This email is already registered. Please sign in instead.");
+      setLoading(false);return;
+    }
+
+    const parts=name.trim().split(" ");
+    const initials=parts.map(w=>w[0]||"").join("").slice(0,2).toUpperCase();
+    const colors=["#3b82f6","#8b5cf6","#10b981","#f97316","#ec4899","#14b8a6","#f59e0b","#0ea5e9"];
+    const color=colors[Math.floor(Math.random()*colors.length)];
+
+    // Pass metadata so the DB trigger can use it when creating the users row
+    const{error:authErr}=await supabase.auth.signUp({
+      email:normalizedEmail,
+      password,
+      options:{data:{name:name.trim(),short_name:parts[0],initials,color}},
+    });
+    if(authErr){
+      const msg=authErr.message.toLowerCase();
+      if(msg.includes("already registered")||msg.includes("already exists")||msg.includes("already in use")){
+        setError("This email is already registered. Please sign in instead.");
+      } else {
+        setError(authErr.message);
+      }
+      setLoading(false);return;
+    }
+    setDone(true);setLoading(false);
+  };
+
+  const fieldStyle={padding:"14px 16px",borderRadius:12,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,outline:"none",width:"100%",boxSizing:"border-box"};
+
+  if(done) return (
+    <div className="login-screen" style={{minHeight:"100vh",background:C.navy,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{textAlign:"center",maxWidth:380}}>
+        <div style={{fontSize:40,marginBottom:16}}>✅</div>
+        <div style={{color:"#fff",fontWeight:800,fontSize:20,marginBottom:8}}>Account created!</div>
+        <div style={{color:"rgba(255,255,255,0.5)",fontSize:14,lineHeight:1.6,marginBottom:24}}>You're registered as a member. Sign in to get started — an admin can update your role from the Admin panel.</div>
+        <button onClick={onSwitch} style={{padding:"14px 32px",borderRadius:12,background:C.accent,color:"#fff",fontWeight:800,fontSize:15,border:"none",cursor:"pointer"}}>Go to Sign In</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="login-screen" style={{minHeight:"100vh",background:C.navy,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{textAlign:"center",marginBottom:32}}>
+        <div style={{color:"rgba(255,255,255,0.35)",fontSize:12,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:8}}>Edify Externship</div>
+        <div style={{color:"#fff",fontWeight:900,fontSize:26,fontFamily:"Georgia,serif",marginBottom:6}}>Create Account</div>
+        <div style={{color:"rgba(255,255,255,0.4)",fontSize:14}}>Join your workspace</div>
+      </div>
+      <div style={{width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:12}}>
+        <input type="text" placeholder="Full name" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSignUp()} style={fieldStyle}/>
+        <input type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSignUp()} style={fieldStyle}/>
+        <input type="password" placeholder="Password (min 6 characters)" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSignUp()} style={fieldStyle}/>
+        <input type="password" placeholder="Confirm password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSignUp()} style={{...fieldStyle,borderColor:confirmPassword&&confirmPassword!==password?"#ef4444":"rgba(255,255,255,0.15)"}}/>
+        {error&&<div style={{background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,padding:"10px 14px",color:"#fca5a5",fontSize:13,textAlign:"center"}}>{error}</div>}
+        <button onClick={handleSignUp} disabled={loading} style={{padding:"14px",borderRadius:12,background:C.accent,color:"#fff",fontWeight:800,fontSize:15,border:"none",cursor:"pointer",marginTop:4}}>{loading?"Creating account...":"Create Account"}</button>
+        <div style={{textAlign:"center",marginTop:4}}>
+          <span style={{color:"rgba(255,255,255,0.4)",fontSize:14}}>Already have an account? </span>
+          <span onClick={onSwitch} style={{color:C.accent,fontWeight:700,fontSize:14,cursor:"pointer"}}>Sign in</span>
+        </div>
       </div>
     </div>
   );
@@ -491,7 +605,7 @@ function TaskModal({task,onSave,onClose,currentUser,projects,users}) {
   const [blockerType,setBlockerType]=useState(task.blockerType||null);
   const [blockerNote,setBlockerNote]=useState(task.blockerNote||"");
   const project=projects.find(p=>p.id===task.projectId);
-  const isSupervisor=currentUser.isSupervisor||currentUser.role==="supervisor"||currentUser.role==="admin";
+  const isSupervisor=isSupervisorRole(currentUser.role,currentUser.isSupervisor);
   const pri=PRI[task.priority]||PRI.P4;
   const isStuckNow=status==="stuck";
   const blockerValid=!isStuckNow||(blockerType&&blockerNote.trim().length>=5);
@@ -574,77 +688,57 @@ function TaskModal({task,onSave,onClose,currentUser,projects,users}) {
   );
 }
 
-function AdminPanel({currentUser,users,onUserAdded,projects,onProjectAdded,onProjectEdited}) {
+function AdminPanel({currentUser,users,onUserRoleChanged,projects,onProjectAdded,onProjectEdited}) {
   const [tab,setTab]=useState("users");
-  const [newName,setNewName]=useState("");
-  const [newShortName,setNewShortName]=useState("");
-  const [newInitials,setNewInitials]=useState("");
-  const [newColor,setNewColor]=useState(USER_COLORS[0]);
-  const [newEmail,setNewEmail]=useState("");
-  const [newPassword,setNewPassword]=useState("");
-  const [newRole,setNewRole]=useState("member");
-  const [newIsSupervisor,setNewIsSupervisor]=useState(false);
-  const [creating,setCreating]=useState(false);
-  const [msg,setMsg]=useState(null);
   const [projectModal,setProjectModal]=useState(null);
+  const [updatingId,setUpdatingId]=useState(null);
+  const [toast,setToast]=useState(null);
 
-  async function createUser(){
-    if(!newName.trim()||!newShortName.trim()||!newInitials.trim()||!newEmail.trim()||!newPassword.trim()){setMsg({type:"error",text:"Name, display name, initials, email, and password are required."});return;}
-    setCreating(true); setMsg(null);
-    const newUser={email:newEmail.trim(),name:newName.trim(),shortName:newShortName.trim(),initials:newInitials.trim().slice(0,2).toUpperCase(),color:newColor,role:newRole,isSupervisor:newIsSupervisor||newRole==="supervisor"};
-    const{data,error}=await supabase.from("users").insert(userToRow(newUser)).select("*").single();
-    if(error){setMsg({type:"error",text:error.message});setCreating(false);return;}
-    onUserAdded(mapUser(data));
-    setMsg({type:"success",text:`Record created. Now go to Supabase → Auth → Add User with email: ${newEmail} / password: ${newPassword}, then copy their UUID into the users table auth_id column.`});
-    setNewName(""); setNewShortName(""); setNewInitials(""); setNewColor(USER_COLORS[0]); setNewEmail(""); setNewPassword(""); setNewRole("member"); setNewIsSupervisor(false); setCreating(false);
-  }
+  const handleRoleChange=async(userId,newRole)=>{
+    setUpdatingId(userId);
+    const{error}=await supabase.from("users").update({role:newRole}).eq("id",userId);
+    if(error){setToast({msg:"Failed: "+error.message,color:C.red});}
+    else{onUserRoleChanged(userId,newRole);setToast({msg:"Role updated",color:C.green});}
+    setUpdatingId(null);
+    setTimeout(()=>setToast(null),2000);
+  };
 
-  if(currentUser.role!=="admin") return <div style={{padding:24,textAlign:"center",color:C.slate}}>Admin access required.</div>;
+  if(!isAdminRole(currentUser.role)) return <div style={{padding:24,textAlign:"center",color:C.slate}}>Admin access required.</div>;
 
   return (
     <div>
       <div style={{fontSize:13,fontWeight:700,color:C.slate,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:16}}>Admin Panel</div>
       <div style={{display:"flex",gap:6,marginBottom:20,background:"#fff",borderRadius:10,padding:4,border:`1px solid ${C.border}`}}>
-        {[{k:"users",l:"👥 Users"},{k:"projects",l:"📁 Projects"}].map(t=><button key={t.k} onClick={()=>setTab(t.k)} style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",background:tab===t.k?C.accent:"transparent",color:tab===t.k?"#fff":C.slate,fontWeight:700,fontSize:13,cursor:"pointer"}}>{t.l}</button>)}
+        {[{k:"users",l:"👥 Team"},{k:"projects",l:"📁 Projects"}].map(t=><button key={t.k} onClick={()=>setTab(t.k)} style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",background:tab===t.k?C.accent:"transparent",color:tab===t.k?"#fff":C.slate,fontWeight:700,fontSize:13,cursor:"pointer"}}>{t.l}</button>)}
       </div>
 
       {tab==="users"&&<div>
-        <div style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:14,padding:16,marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.mid,marginBottom:12}}>Add Team Member</div>
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Full name" style={inputStyle}/>
-            <div style={{display:"flex",gap:8}}>
-              <input value={newShortName} onChange={e=>setNewShortName(e.target.value)} placeholder="Short name" style={{...inputStyle,flex:1}}/>
-              <input value={newInitials} onChange={e=>setNewInitials(e.target.value.toUpperCase().slice(0,2))} placeholder="Initials" maxLength={2} style={{...inputStyle,flex:1}}/>
+        <div style={{fontSize:12,color:C.slate,marginBottom:14,lineHeight:1.6}}>Assign a role to each team member. New members sign up themselves and appear here as <strong>member</strong>.</div>
+        {users.map(u=>{
+          const isMe=u.id===currentUser.id;
+          const roleColor={founder:C.red,strategist:C.purple,"project manager":C.teal,"digital creator":C.pink,developer:C.accent,designer:C.orange,member:C.slate,admin:C.red,supervisor:C.teal}[u.role]||C.slate;
+          return <div key={u.id} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12}}>
+            <Av userId={u.id} users={users} size={36}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,color:C.mid,fontSize:14}}>{u.name}{isMe&&<span style={{fontSize:11,color:C.accent,fontWeight:700,marginLeft:6}}>· You</span>}</div>
+              <div style={{fontSize:12,color:C.slate,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.email}</div>
             </div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {USER_COLORS.map(col=><button key={col} onClick={()=>setNewColor(col)} title={col} style={{width:28,height:28,borderRadius:"50%",background:col,cursor:"pointer",border:newColor===col?`3px solid ${C.mid}`:"3px solid transparent",padding:0}}/>)}
+            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+              {updatingId===u.id
+                ? <span style={{fontSize:12,color:C.slate}}>Saving…</span>
+                : <select
+                    value={u.role}
+                    onChange={e=>handleRoleChange(u.id,e.target.value)}
+                    disabled={isMe}
+                    title={isMe?"You cannot change your own role":""}
+                    style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${roleColor}`,background:roleColor+"12",color:roleColor,fontWeight:700,fontSize:12,cursor:isMe?"not-allowed":"pointer",outline:"none"}}>
+                    {DESIGNATIONS.map(d=><option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
+                  </select>
+              }
             </div>
-            <input value={newEmail} onChange={e=>setNewEmail(e.target.value)} placeholder="Email address" style={inputStyle}/>
-            <input value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Password (share with user)" type="text" style={inputStyle}/>
-            <div style={{display:"flex",gap:8}}>
-              <select value={newRole} onChange={e=>setNewRole(e.target.value)} style={{...inputStyle,flex:1}}>
-                <option value="admin">Admin</option>
-                <option value="supervisor">Supervisor</option>
-                <option value="member">Member</option>
-              </select>
-            </div>
-            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.mid,fontWeight:600}}>
-              <input type="checkbox" checked={newIsSupervisor} onChange={e=>setNewIsSupervisor(e.target.checked)} style={{width:16,height:16}}/>
-              Is supervisor
-            </label>
-            <button onClick={createUser} disabled={creating} style={{padding:"12px",borderRadius:9,background:C.accent,color:"#fff",fontWeight:700,fontSize:14,border:"none",cursor:"pointer"}}>{creating?"Creating...":"Create User"}</button>
-            {msg&&<div style={{fontSize:12,color:msg.type==="error"?C.red:C.green,lineHeight:1.6}}>{msg.text}</div>}
-          </div>
-        </div>
-        <div style={{fontSize:12,fontWeight:700,color:C.slate,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Team ({users.length})</div>
-        {users.map(u=><div key={u.id} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12}}>
-          <Av userId={u.id} users={users} size={36}/>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:700,color:C.mid,fontSize:14}}>{u.name}</div>
-            <div style={{fontSize:12,color:C.slate,marginTop:2}}>{u.email} · {u.shortName} · <span style={{color:u.role==="admin"?C.red:u.role==="supervisor"?C.teal:C.slate,fontWeight:700}}>{u.role}</span>{u.isSupervisor&&<span style={{color:C.teal,fontWeight:700}}> · Supervisor</span>}</div>
-          </div>
-        </div>)}
+          </div>;
+        })}
+        {toast&&<div style={{marginTop:12,padding:"10px 14px",borderRadius:10,background:toast.color+"15",color:toast.color,fontSize:13,fontWeight:700,textAlign:"center"}}>{toast.msg}</div>}
       </div>}
 
       {tab==="projects"&&<div>
@@ -673,7 +767,7 @@ function AdminPanel({currentUser,users,onUserAdded,projects,onProjectAdded,onPro
 }
 
 function BriefingView({tasks,currentUser,onTaskTap,projects,users}) {
-  const isSuper=currentUser.isSupervisor||currentUser.role==="supervisor"||currentUser.role==="admin";
+  const isSuper=isSupervisorRole(currentUser.role,currentUser.isSupervisor);
   const myTasks=isSuper?tasks:tasks.filter(t=>t.assignee===currentUser.id);
   const overdue=myTasks.filter(t=>t.status==="overdue");
   const stuck=myTasks.filter(t=>t.status==="stuck");
@@ -699,7 +793,7 @@ function BriefingView({tasks,currentUser,onTaskTap,projects,users}) {
 }
 
 function TasksView({tasks,currentUser,onTaskTap,projects,users,onAddTask}) {
-  const isSuper=currentUser.isSupervisor||currentUser.role==="supervisor"||currentUser.role==="admin";
+  const isSuper=isSupervisorRole(currentUser.role,currentUser.isSupervisor);
   const [statusFilter,setStatusFilter]=useState("active");
   const [priFilter,setPriFilter]=useState("all");
   const baseTasks=isSuper?tasks:tasks.filter(t=>t.assignee===currentUser.id);
@@ -802,6 +896,7 @@ const TABS=[
 export default function App() {
   const [loading,setLoading]=useState(true);
   const [session,setSession]=useState(null);
+  const [showSignUp,setShowSignUp]=useState(false);
   const [currentUser,setCurrentUser]=useState(null);
   const [users,setUsers]=useState([]);
   const [tasks,setTasks]=useState([]);
@@ -826,6 +921,13 @@ export default function App() {
         supabase.from("tasks").select("*"),
         supabase.from("projects").select("*").order("id"),
       ]);
+      const loadErr=usersRes.error||tasksRes.error||projectsRes.error;
+      if(loadErr){
+        setToast({msg:"Failed to load data: "+loadErr.message,color:C.red});
+        setTimeout(()=>setToast(null),4000);
+        setLoading(false);
+        return;
+      }
       const loadedUsers=(usersRes.data||[]).map(mapUser);
       setUsers(loadedUsers);
       const me=loadedUsers.find(u=>u.authId===session.user.id);
@@ -848,27 +950,29 @@ export default function App() {
   };
 
   const handleAddTask=(newTask)=>{setTasks(prev=>[...prev,newTask]);showToast("✓ Task added",C.green);};
-  const handleUserAdded=(u)=>{setUsers(prev=>[...prev,u].sort((a,b)=>a.shortName.localeCompare(b.shortName)));showToast("User created",C.green);};
+  const handleUserRoleChanged=(userId,newRole)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,role:newRole}:u));showToast("Role updated",C.green);};
   const handleProjectAdded=(p)=>{setProjects(prev=>[...prev,p].sort((a,b)=>a.id.localeCompare(b.id)));showToast("✓ Project created",C.green);};
   const handleProjectEdited=(p)=>{setProjects(prev=>prev.map(x=>x.id===p.id?p:x));showToast("✓ Project updated",C.green);};
   const handleLogout=async()=>await supabase.auth.signOut();
 
   if(loading) return <div style={{minHeight:"100vh",background:C.navy,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"rgba(255,255,255,0.4)",fontSize:14}}>Loading workspace...</div></div>;
-  if(!session) return <LoginScreen/>;
+  if(!session) return showSignUp
+    ? <SignUpScreen onSwitch={()=>setShowSignUp(false)}/>
+    : <LoginScreen onSwitch={()=>setShowSignUp(true)}/>;
   if(!currentUser) return <div style={{minHeight:"100vh",background:C.navy,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
     <div style={{color:"#fff",fontSize:16}}>Account not set up yet.</div>
     <div style={{color:"rgba(255,255,255,0.5)",fontSize:13,textAlign:"center",maxWidth:300}}>Ask admin to add your record to the users table with your auth_id.</div>
     <button onClick={handleLogout} style={{padding:"10px 20px",borderRadius:9,background:"rgba(255,255,255,0.1)",color:"#fff",border:"none",cursor:"pointer",fontWeight:700}}>Sign Out</button>
   </div>;
 
-  const isAdmin=currentUser.role==="admin";
+  const isAdmin=isAdminRole(currentUser.role);
   const visibleTabs=TABS.filter(t=>!t.adminOnly||isAdmin);
 
   const renderTab=()=>{
     if(activeTab==="briefing") return <BriefingView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users}/>;
     if(activeTab==="tasks")    return <TasksView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={()=>setAddTaskModal(true)}/>;
     if(activeTab==="projects") return <ProjectsView tasks={tasks} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={(pid)=>setAddTaskModal(pid)}/>;
-    if(activeTab==="admin")    return <AdminPanel currentUser={currentUser} users={users} onUserAdded={handleUserAdded} projects={projects} onProjectAdded={handleProjectAdded} onProjectEdited={handleProjectEdited}/>;
+    if(activeTab==="admin")    return <AdminPanel currentUser={currentUser} users={users} onUserRoleChanged={handleUserRoleChanged} projects={projects} onProjectAdded={handleProjectAdded} onProjectEdited={handleProjectEdited}/>;
   };
 
   return (
