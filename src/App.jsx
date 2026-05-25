@@ -53,7 +53,7 @@ const BLOCKER_TYPES = [
 
 const WAITING_KEYS = ["waiting_strategist","waiting_client","waiting_asset","waiting_developer","vendor_delay","dependency_incomplete"];
 
-const DESIGNATIONS = ["founder","strategist","project manager","digital creator","developer","designer"];
+const DESIGNATIONS = ["admin","founder","strategist","project manager","digital creator","developer","designer"];
 
 function isAdminRole(role) {
   return ["admin","founder","strategist"].includes(role);
@@ -688,7 +688,7 @@ function TaskModal({task,onSave,onClose,currentUser,projects,users}) {
   );
 }
 
-function AdminPanel({currentUser,users,onUserRoleChanged,projects,onProjectAdded,onProjectEdited}) {
+function AdminPanel({currentUser,users,onUserRoleChanged,onUserSupervisorChanged,projects,onProjectAdded,onProjectEdited}) {
   const [tab,setTab]=useState("users");
   const [projectModal,setProjectModal]=useState(null);
   const [updatingId,setUpdatingId]=useState(null);
@@ -699,6 +699,15 @@ function AdminPanel({currentUser,users,onUserRoleChanged,projects,onProjectAdded
     const{error}=await supabase.from("users").update({role:newRole}).eq("id",userId);
     if(error){setToast({msg:"Failed: "+error.message,color:C.red});}
     else{onUserRoleChanged(userId,newRole);setToast({msg:"Role updated",color:C.green});}
+    setUpdatingId(null);
+    setTimeout(()=>setToast(null),2000);
+  };
+
+  const handleSupervisorToggle=async(userId,current)=>{
+    setUpdatingId(userId);
+    const{error}=await supabase.from("users").update({is_supervisor:!current}).eq("id",userId);
+    if(error){setToast({msg:"Failed: "+error.message,color:C.red});}
+    else{onUserSupervisorChanged(userId,!current);setToast({msg:!current?"Supervisor granted":"Supervisor removed",color:C.green});}
     setUpdatingId(null);
     setTimeout(()=>setToast(null),2000);
   };
@@ -722,16 +731,23 @@ function AdminPanel({currentUser,users,onUserRoleChanged,projects,onProjectAdded
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:700,color:C.mid,fontSize:14}}>{u.name}{isMe&&<span style={{fontSize:11,color:C.accent,fontWeight:700,marginLeft:6}}>· You</span>}</div>
               <div style={{fontSize:12,color:C.slate,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.email}</div>
+              {!isMe&&<button
+                onClick={()=>handleSupervisorToggle(u.id,u.isSupervisor)}
+                disabled={updatingId===u.id}
+                style={{marginTop:5,padding:"3px 10px",borderRadius:20,border:`1.5px solid ${u.isSupervisor?C.teal:C.border}`,background:u.isSupervisor?C.teal+"18":"transparent",color:u.isSupervisor?C.teal:C.slate,fontWeight:700,fontSize:11,cursor:"pointer"}}>
+                {u.isSupervisor?"★ Supervisor":"☆ Set Supervisor"}
+              </button>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
               {updatingId===u.id
                 ? <span style={{fontSize:12,color:C.slate}}>Saving…</span>
                 : <select
-                    value={u.role}
+                    value={DESIGNATIONS.includes(u.role)?u.role:(u.role||"member")}
                     onChange={e=>handleRoleChange(u.id,e.target.value)}
                     disabled={isMe}
                     title={isMe?"You cannot change your own role":""}
                     style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${roleColor}`,background:roleColor+"12",color:roleColor,fontWeight:700,fontSize:12,cursor:isMe?"not-allowed":"pointer",outline:"none"}}>
+                    {!DESIGNATIONS.includes(u.role)&&<option value={u.role||"member"}>{(u.role||"member").charAt(0).toUpperCase()+(u.role||"member").slice(1)}</option>}
                     {DESIGNATIONS.map(d=><option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
                   </select>
               }
@@ -950,7 +966,8 @@ export default function App() {
   };
 
   const handleAddTask=(newTask)=>{setTasks(prev=>[...prev,newTask]);showToast("✓ Task added",C.green);};
-  const handleUserRoleChanged=(userId,newRole)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,role:newRole}:u));showToast("Role updated",C.green);};
+  const handleUserRoleChanged=(userId,newRole)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,role:newRole}:u));};
+  const handleUserSupervisorChanged=(userId,isSup)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,isSupervisor:isSup}:u));};
   const handleProjectAdded=(p)=>{setProjects(prev=>[...prev,p].sort((a,b)=>a.id.localeCompare(b.id)));showToast("✓ Project created",C.green);};
   const handleProjectEdited=(p)=>{setProjects(prev=>prev.map(x=>x.id===p.id?p:x));showToast("✓ Project updated",C.green);};
   const handleLogout=async()=>await supabase.auth.signOut();
@@ -972,7 +989,7 @@ export default function App() {
     if(activeTab==="briefing") return <BriefingView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users}/>;
     if(activeTab==="tasks")    return <TasksView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={()=>setAddTaskModal(true)}/>;
     if(activeTab==="projects") return <ProjectsView tasks={tasks} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={(pid)=>setAddTaskModal(pid)}/>;
-    if(activeTab==="admin")    return <AdminPanel currentUser={currentUser} users={users} onUserRoleChanged={handleUserRoleChanged} projects={projects} onProjectAdded={handleProjectAdded} onProjectEdited={handleProjectEdited}/>;
+    if(activeTab==="admin")    return <AdminPanel currentUser={currentUser} users={users} onUserRoleChanged={handleUserRoleChanged} onUserSupervisorChanged={handleUserSupervisorChanged} projects={projects} onProjectAdded={handleProjectAdded} onProjectEdited={handleProjectEdited}/>;
   };
 
   return (
