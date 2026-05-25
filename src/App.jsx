@@ -53,13 +53,13 @@ const BLOCKER_TYPES = [
 
 const WAITING_KEYS = ["waiting_strategist","waiting_client","waiting_asset","waiting_developer","vendor_delay","dependency_incomplete"];
 
-const DESIGNATIONS = ["admin","founder","strategist","project manager","digital creator","developer","designer"];
+const DESIGNATIONS = ["founder","strategist","project manager","digital creator","developer","designer"];
 
 function isAdminRole(role) {
-  return ["admin","founder","strategist"].includes(role);
+  return role === "admin";
 }
 function isSupervisorRole(role, isSup) {
-  return !!isSup || ["admin","founder","strategist","project manager","supervisor"].includes(role);
+  return role === "admin" || !!isSup;
 }
 
 function mapTask(row) {
@@ -76,14 +76,14 @@ function mapUser(row) {
   return {
     id:row.id, authId:row.auth_id, email:row.email,
     name:row.name, shortName:row.short_name, initials:row.initials,
-    color:row.color, role:row.role, isSupervisor:!!row.is_supervisor,
+    color:row.color, role:row.role, designation:row.designation||null, isSupervisor:!!row.is_supervisor,
   };
 }
 function userToRow(u) {
   return {
     id:u.id, auth_id:u.authId||null, email:u.email,
     name:u.name, short_name:u.shortName, initials:u.initials,
-    color:u.color, role:u.role, is_supervisor:!!u.isSupervisor,
+    color:u.color, role:u.role, designation:u.designation||null, is_supervisor:!!u.isSupervisor,
   };
 }
 function mapProject(row) {
@@ -688,28 +688,36 @@ function TaskModal({task,onSave,onClose,currentUser,projects,users}) {
   );
 }
 
-function AdminPanel({currentUser,users,onUserRoleChanged,onUserSupervisorChanged,projects,onProjectAdded,onProjectEdited}) {
+function AdminPanel({currentUser,users,onUserRoleChanged,onUserDesignationChanged,onUserSupervisorChanged,projects,onProjectAdded,onProjectEdited}) {
   const [tab,setTab]=useState("users");
   const [projectModal,setProjectModal]=useState(null);
   const [updatingId,setUpdatingId]=useState(null);
   const [toast,setToast]=useState(null);
 
-  const handleRoleChange=async(userId,newRole)=>{
+  const showToastMsg=(msg,color)=>{setToast({msg,color});setTimeout(()=>setToast(null),2000);};
+
+  const handleAccessChange=async(userId,newRole)=>{
     setUpdatingId(userId);
     const{error}=await supabase.from("users").update({role:newRole}).eq("id",userId);
-    if(error){setToast({msg:"Failed: "+error.message,color:C.red});}
-    else{onUserRoleChanged(userId,newRole);setToast({msg:"Role updated",color:C.green});}
+    if(error){showToastMsg("Failed: "+error.message,C.red);}
+    else{onUserRoleChanged(userId,newRole);showToastMsg("Access updated",C.green);}
     setUpdatingId(null);
-    setTimeout(()=>setToast(null),2000);
+  };
+
+  const handleDesignationChange=async(userId,designation)=>{
+    setUpdatingId(userId);
+    const{error}=await supabase.from("users").update({designation}).eq("id",userId);
+    if(error){showToastMsg("Failed: "+error.message,C.red);}
+    else{onUserDesignationChanged(userId,designation);showToastMsg("Title updated",C.green);}
+    setUpdatingId(null);
   };
 
   const handleSupervisorToggle=async(userId,current)=>{
     setUpdatingId(userId);
     const{error}=await supabase.from("users").update({is_supervisor:!current}).eq("id",userId);
-    if(error){setToast({msg:"Failed: "+error.message,color:C.red});}
-    else{onUserSupervisorChanged(userId,!current);setToast({msg:!current?"Supervisor granted":"Supervisor removed",color:C.green});}
+    if(error){showToastMsg("Failed: "+error.message,C.red);}
+    else{onUserSupervisorChanged(userId,!current);showToastMsg(!current?"Supervisor granted":"Supervisor removed",C.green);}
     setUpdatingId(null);
-    setTimeout(()=>setToast(null),2000);
   };
 
   if(!isAdminRole(currentUser.role)) return <div style={{padding:24,textAlign:"center",color:C.slate}}>Admin access required.</div>;
@@ -722,36 +730,43 @@ function AdminPanel({currentUser,users,onUserRoleChanged,onUserSupervisorChanged
       </div>
 
       {tab==="users"&&<div>
-        <div style={{fontSize:12,color:C.slate,marginBottom:14,lineHeight:1.6}}>Assign a role to each team member. New members sign up themselves and appear here as <strong>member</strong>.</div>
+        <div style={{fontSize:12,color:C.slate,marginBottom:14,lineHeight:1.6}}>Set each member's access level, job title, and supervisor permission.</div>
         {users.map(u=>{
           const isMe=u.id===currentUser.id;
-          const roleColor={founder:C.red,strategist:C.purple,"project manager":C.teal,"digital creator":C.pink,developer:C.accent,designer:C.orange,member:C.slate,admin:C.red,supervisor:C.teal}[u.role]||C.slate;
-          return <div key={u.id} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12}}>
-            <Av userId={u.id} users={users} size={36}/>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,color:C.mid,fontSize:14}}>{u.name}{isMe&&<span style={{fontSize:11,color:C.accent,fontWeight:700,marginLeft:6}}>· You</span>}</div>
-              <div style={{fontSize:12,color:C.slate,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.email}</div>
-              {!isMe&&<button
-                onClick={()=>handleSupervisorToggle(u.id,u.isSupervisor)}
-                disabled={updatingId===u.id}
-                style={{marginTop:5,padding:"3px 10px",borderRadius:20,border:`1.5px solid ${u.isSupervisor?C.teal:C.border}`,background:u.isSupervisor?C.teal+"18":"transparent",color:u.isSupervisor?C.teal:C.slate,fontWeight:700,fontSize:11,cursor:"pointer"}}>
-                {u.isSupervisor?"★ Supervisor":"☆ Set Supervisor"}
-              </button>}
+          const isAdmin=u.role==="admin";
+          return <div key={u.id} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 14px",marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:isMe?0:10}}>
+              <Av userId={u.id} users={users} size={36}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,color:C.mid,fontSize:14}}>{u.name}{isMe&&<span style={{fontSize:11,color:C.accent,fontWeight:700,marginLeft:6}}>· You</span>}</div>
+                <div style={{fontSize:12,color:C.slate,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.email}</div>
+              </div>
+              {isMe&&<div style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,background:isAdmin?C.red+"15":"#f0fdf4",color:isAdmin?C.red:"#16a34a",border:`1px solid ${isAdmin?C.red+"40":"#bbf7d0"}`}}>{isAdmin?"Admin":"Member"}</div>}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-              {updatingId===u.id
-                ? <span style={{fontSize:12,color:C.slate}}>Saving…</span>
-                : <select
-                    value={DESIGNATIONS.includes(u.role)?u.role:(u.role||"member")}
-                    onChange={e=>handleRoleChange(u.id,e.target.value)}
-                    disabled={isMe}
-                    title={isMe?"You cannot change your own role":""}
-                    style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${roleColor}`,background:roleColor+"12",color:roleColor,fontWeight:700,fontSize:12,cursor:isMe?"not-allowed":"pointer",outline:"none"}}>
-                    {!DESIGNATIONS.includes(u.role)&&<option value={u.role||"member"}>{(u.role||"member").charAt(0).toUpperCase()+(u.role||"member").slice(1)}</option>}
+            {!isMe&&(updatingId===u.id
+              ? <div style={{fontSize:12,color:C.slate,padding:"4px 0"}}>Saving…</div>
+              : <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                  <select
+                    value={u.role==="admin"?"admin":"member"}
+                    onChange={e=>handleAccessChange(u.id,e.target.value)}
+                    style={{padding:"5px 10px",borderRadius:8,border:`1.5px solid ${isAdmin?C.red:"#16a34a"}`,background:isAdmin?C.red+"12":"#f0fdf4",color:isAdmin?C.red:"#16a34a",fontWeight:700,fontSize:12,outline:"none",cursor:"pointer"}}>
+                    <option value="admin">Admin</option>
+                    <option value="member">Member</option>
+                  </select>
+                  <select
+                    value={u.designation||""}
+                    onChange={e=>handleDesignationChange(u.id,e.target.value||null)}
+                    style={{padding:"5px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,background:C.bg,color:C.mid,fontWeight:600,fontSize:12,outline:"none",cursor:"pointer",flex:1}}>
+                    <option value="">No title</option>
                     {DESIGNATIONS.map(d=><option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
                   </select>
-              }
-            </div>
+                  <button
+                    onClick={()=>handleSupervisorToggle(u.id,u.isSupervisor)}
+                    style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${u.isSupervisor?C.teal:C.border}`,background:u.isSupervisor?C.teal+"18":"transparent",color:u.isSupervisor?C.teal:C.slate,fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>
+                    {u.isSupervisor?"★ Supervisor":"☆ Supervisor"}
+                  </button>
+                </div>
+            )}
           </div>;
         })}
         {toast&&<div style={{marginTop:12,padding:"10px 14px",borderRadius:10,background:toast.color+"15",color:toast.color,fontSize:13,fontWeight:700,textAlign:"center"}}>{toast.msg}</div>}
@@ -967,6 +982,7 @@ export default function App() {
 
   const handleAddTask=(newTask)=>{setTasks(prev=>[...prev,newTask]);showToast("✓ Task added",C.green);};
   const handleUserRoleChanged=(userId,newRole)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,role:newRole}:u));};
+  const handleUserDesignationChanged=(userId,designation)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,designation}:u));};
   const handleUserSupervisorChanged=(userId,isSup)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,isSupervisor:isSup}:u));};
   const handleProjectAdded=(p)=>{setProjects(prev=>[...prev,p].sort((a,b)=>a.id.localeCompare(b.id)));showToast("✓ Project created",C.green);};
   const handleProjectEdited=(p)=>{setProjects(prev=>prev.map(x=>x.id===p.id?p:x));showToast("✓ Project updated",C.green);};
@@ -989,7 +1005,7 @@ export default function App() {
     if(activeTab==="briefing") return <BriefingView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users}/>;
     if(activeTab==="tasks")    return <TasksView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={()=>setAddTaskModal(true)}/>;
     if(activeTab==="projects") return <ProjectsView tasks={tasks} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={(pid)=>setAddTaskModal(pid)}/>;
-    if(activeTab==="admin")    return <AdminPanel currentUser={currentUser} users={users} onUserRoleChanged={handleUserRoleChanged} onUserSupervisorChanged={handleUserSupervisorChanged} projects={projects} onProjectAdded={handleProjectAdded} onProjectEdited={handleProjectEdited}/>;
+    if(activeTab==="admin")    return <AdminPanel currentUser={currentUser} users={users} onUserRoleChanged={handleUserRoleChanged} onUserDesignationChanged={handleUserDesignationChanged} onUserSupervisorChanged={handleUserSupervisorChanged} projects={projects} onProjectAdded={handleProjectAdded} onProjectEdited={handleProjectEdited}/>;
   };
 
   return (
