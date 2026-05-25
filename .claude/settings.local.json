@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"c:\\\\Users\\\\ASUS\\\\Desktop\\\\Project9\\\\Final Project\\\\frontend\" && ls)",
+      "Read(//c/Users/ASUS/Desktop/Project9/Final Project/frontend/**)",
+      "Bash(cd \"c:\\\\Users\\\\ASUS\\\\Desktop\\\\Project9\\\\Final Project\\\\backend\" && ls)",
+      "Read(//c/Users/ASUS/Desktop/Project9/Final Project/backend/**)"
+    ]
+  }
+}
