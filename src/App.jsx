@@ -86,6 +86,16 @@ function userToRow(u) {
     color:u.color, role:u.role, designation:u.designation||null, is_supervisor:!!u.isSupervisor,
   };
 }
+function mapSubtask(row) {
+  return {
+    id:row.id, taskId:row.task_id, title:row.title,
+    assignee:row.assignee||null, status:row.status||"pending", createdAt:row.created_at||null,
+  };
+}
+function genSubtaskId(taskId, subtasks) {
+  const nums=subtasks.filter(s=>s.taskId===taskId).map(s=>parseInt(s.id.split("-S")[1])||0);
+  return `${taskId}-S${Math.max(0,...nums)+1}`;
+}
 function mapProject(row) {
   return {
     id:row.id, name:row.name, color:row.color, client:row.client,
@@ -597,13 +607,37 @@ function TaskCard({task,onTap,showProject=true,projects,users}) {
   );
 }
 
-function TaskModal({task,onSave,onClose,currentUser,projects,users}) {
+function TaskModal({task,onSave,onClose,currentUser,projects,users,subtasks,allSubtasks,onSubtaskAdded,onSubtaskUpdated,onSubtaskDeleted}) {
   const [status,setStatus]=useState(task.status);
   const [notes,setNotes]=useState(task.notes||"");
   const [showEsc,setShowEsc]=useState(false);
   const [escalation,setEscalation]=useState(task.escalation||null);
   const [blockerType,setBlockerType]=useState(task.blockerType||null);
   const [blockerNote,setBlockerNote]=useState(task.blockerNote||"");
+  const [newSubtitle,setNewSubtitle]=useState("");
+  const [newSubAssignee,setNewSubAssignee]=useState(task.assignee||"");
+  const [subSaving,setSubSaving]=useState(false);
+
+  const handleAddSubtask=async()=>{
+    if(!newSubtitle.trim()) return;
+    setSubSaving(true);
+    const id=genSubtaskId(task.id,allSubtasks);
+    const row={id,task_id:task.id,title:newSubtitle.trim(),assignee:newSubAssignee||null,status:"pending",created_at:Date.now()};
+    const{error}=await supabase.from("subtasks").insert(row);
+    if(!error){onSubtaskAdded(mapSubtask(row));setNewSubtitle("");setNewSubAssignee(task.assignee||"");}
+    setSubSaving(false);
+  };
+
+  const handleToggleSubtask=async(s)=>{
+    const updated={...s,status:s.status==="done"?"pending":"done"};
+    const{error}=await supabase.from("subtasks").update({status:updated.status}).eq("id",s.id);
+    if(!error) onSubtaskUpdated(updated);
+  };
+
+  const handleDeleteSubtask=async(id)=>{
+    const{error}=await supabase.from("subtasks").delete().eq("id",id);
+    if(!error) onSubtaskDeleted(id);
+  };
   const project=projects.find(p=>p.id===task.projectId);
   const isSupervisor=isSupervisorRole(currentUser.role,currentUser.isSupervisor);
   const pri=PRI[task.priority]||PRI.P4;
@@ -668,6 +702,33 @@ function TaskModal({task,onSave,onClose,currentUser,projects,users}) {
           {statuses.map(s=><button key={s.key} onClick={()=>handleStatusChange(s.key)} style={{padding:"12px 8px",borderRadius:10,border:`2px solid ${status===s.key?s.color:C.border}`,background:status===s.key?s.color+"15":"#fff",color:status===s.key?s.color:C.slate,fontWeight:700,fontSize:13.5,cursor:"pointer"}}>{s.label}</button>)}
         </div>
         {isStuckNow&&<BlockerSelector blockerType={blockerType} blockerNote={blockerNote} onTypeChange={setBlockerType} onNoteChange={setBlockerNote}/>}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.slate,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Subtasks {subtasks.length>0&&`(${subtasks.filter(s=>s.status==="done").length}/${subtasks.length})`}</div>
+          {subtasks.map(s=>(
+            <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+              <button onClick={()=>handleToggleSubtask(s)} style={{width:20,height:20,borderRadius:5,border:`2px solid ${s.status==="done"?C.green:C.border}`,background:s.status==="done"?C.green:"#fff",color:"#fff",fontWeight:900,fontSize:12,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {s.status==="done"&&"✓"}
+              </button>
+              <span style={{flex:1,fontSize:13,color:s.status==="done"?C.slate:C.mid,textDecoration:s.status==="done"?"line-through":"none",lineHeight:1.4}}>{s.title}</span>
+              <Av userId={s.assignee} users={users} size={22}/>
+              <button onClick={()=>handleDeleteSubtask(s.id)} style={{color:C.slate,background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:"0 2px"}}>✕</button>
+            </div>
+          ))}
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <input
+              value={newSubtitle}
+              onChange={e=>setNewSubtitle(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&handleAddSubtask()}
+              placeholder="Add subtask..."
+              style={{flex:1,padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13,outline:"none"}}
+            />
+            <select value={newSubAssignee} onChange={e=>setNewSubAssignee(e.target.value)} style={{padding:"7px 8px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:12,background:"#fff",maxWidth:90}}>
+              <option value="">Anyone</option>
+              {users.map(u=><option key={u.id} value={u.id}>{u.shortName}</option>)}
+            </select>
+            <button onClick={handleAddSubtask} disabled={!newSubtitle.trim()||subSaving} style={{padding:"7px 12px",borderRadius:8,background:newSubtitle.trim()?C.accent:C.border,color:"#fff",fontWeight:700,fontSize:14,border:"none",cursor:newSubtitle.trim()?"pointer":"not-allowed"}}>+</button>
+          </div>
+        </div>
         <textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Add context or note for the team..." style={{...taStyle,height:70,marginBottom:14}}/>
         {isSupervisor&&<>
           <button onClick={()=>setShowEsc(!showEsc)} style={{width:"100%",padding:"11px",borderRadius:10,border:`1px solid ${C.border}`,background:showEsc?"#fff7ed":"#fff",color:C.orange,fontWeight:700,fontSize:14,cursor:"pointer",marginBottom:showEsc?12:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>🛡 Escalation Options {showEsc?"▲":"▼"}</button>
@@ -932,6 +993,7 @@ export default function App() {
   const [users,setUsers]=useState([]);
   const [tasks,setTasks]=useState([]);
   const [projects,setProjects]=useState([]);
+  const [subtasks,setSubtasks]=useState([]);
   const [activeTab,setActiveTab]=useState("briefing");
   const [taskModal,setTaskModal]=useState(null);
   const [addTaskModal,setAddTaskModal]=useState(null);
@@ -947,12 +1009,13 @@ export default function App() {
     if(!session){setCurrentUser(null);setLoading(false);return;}
     async function loadAll(){
       setLoading(true);
-      const[usersRes,tasksRes,projectsRes]=await Promise.all([
+      const[usersRes,tasksRes,projectsRes,subtasksRes]=await Promise.all([
         supabase.from("users").select("*").order("short_name"),
         supabase.from("tasks").select("*"),
         supabase.from("projects").select("*").order("id"),
+        supabase.from("subtasks").select("*"),
       ]);
-      const loadErr=usersRes.error||tasksRes.error||projectsRes.error;
+      const loadErr=usersRes.error||tasksRes.error||projectsRes.error||subtasksRes.error;
       if(loadErr){
         setToast({msg:"Failed to load data: "+loadErr.message,color:C.red});
         setTimeout(()=>setToast(null),4000);
@@ -965,6 +1028,7 @@ export default function App() {
       setCurrentUser(me||null);
       if(tasksRes.data) setTasks(tasksRes.data.map(mapTask));
       if(projectsRes.data) setProjects(projectsRes.data.map(mapProject));
+      if(subtasksRes.data) setSubtasks(subtasksRes.data.map(mapSubtask));
       setLoading(false);
     }
     loadAll();
@@ -981,6 +1045,9 @@ export default function App() {
   };
 
   const handleAddTask=(newTask)=>{setTasks(prev=>[...prev,newTask]);showToast("✓ Task added",C.green);};
+  const handleSubtaskAdded=(s)=>{setSubtasks(prev=>[...prev,s]);};
+  const handleSubtaskUpdated=(s)=>{setSubtasks(prev=>prev.map(x=>x.id===s.id?s:x));};
+  const handleSubtaskDeleted=(id)=>{setSubtasks(prev=>prev.filter(x=>x.id!==id));};
   const handleUserRoleChanged=(userId,newRole)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,role:newRole}:u));};
   const handleUserDesignationChanged=(userId,designation)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,designation}:u));};
   const handleUserSupervisorChanged=(userId,isSup)=>{setUsers(prev=>prev.map(u=>u.id===userId?{...u,isSupervisor:isSup}:u));};
@@ -1032,7 +1099,7 @@ export default function App() {
         </button>)}
       </div>
 
-      {taskModal&&<TaskModal task={taskModal} onSave={handleUpdateTask} onClose={()=>setTaskModal(null)} currentUser={currentUser} projects={projects} users={users}/>}
+      {taskModal&&<TaskModal task={taskModal} onSave={handleUpdateTask} onClose={()=>setTaskModal(null)} currentUser={currentUser} projects={projects} users={users} subtasks={subtasks.filter(s=>s.taskId===taskModal.id)} allSubtasks={subtasks} onSubtaskAdded={handleSubtaskAdded} onSubtaskUpdated={handleSubtaskUpdated} onSubtaskDeleted={handleSubtaskDeleted}/>}
       {addTaskModal&&<AddTaskModal projects={projects} tasks={tasks} users={users} currentUser={currentUser} onSave={handleAddTask} onClose={()=>setAddTaskModal(null)} defaultProjectId={typeof addTaskModal==="string"?addTaskModal:null}/>}
       {toast&&<div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",background:toast.color,color:"#fff",padding:"10px 20px",borderRadius:20,fontWeight:700,fontSize:14,zIndex:200,boxShadow:"0 4px 20px rgba(0,0,0,0.2)",whiteSpace:"nowrap"}}>{toast.msg}</div>}
     </div>
