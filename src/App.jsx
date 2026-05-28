@@ -564,8 +564,10 @@ function BlockerSelector({blockerType,blockerNote,onTypeChange,onNoteChange}) {
   );
 }
 
-function TaskCard({task,onTap,showProject=true,projects,users}) {
+function TaskCard({task,onTap,showProject=true,projects,users,subtasks=[]}) {
   const p=projects.find(x=>x.id===task.projectId);
+  const taskSubs=subtasks.filter(s=>s.taskId===task.id);
+  const doneSubs=taskSubs.filter(s=>s.status==="done").length;
   const stale=isStale(task);
   const pri=PRI[task.priority]||PRI.P4;
   const isBlocked=task.status==="stuck";
@@ -602,6 +604,7 @@ function TaskCard({task,onTap,showProject=true,projects,users}) {
         {showProject&&p&&<ProjTag projectId={p.id} projects={projects}/>}
         {task.due&&task.due!=="TBD"&&<span style={{fontSize:11,color:task.status==="overdue"?C.red:C.slate}}>Due {task.due}</span>}
         {task.notes&&<span style={{fontSize:11,color:C.purple}}>📝</span>}
+        {taskSubs.length>0&&<span style={{fontSize:11,fontWeight:700,color:"#7c3aed",background:"#ede9fe",padding:"2px 7px",borderRadius:20,marginLeft:"auto"}}>☑ {doneSubs}/{taskSubs.length}</span>}
       </div>
     </div>
   );
@@ -856,7 +859,7 @@ function AdminPanel({currentUser,users,onUserRoleChanged,onUserDesignationChange
   );
 }
 
-function BriefingView({tasks,currentUser,onTaskTap,projects,users}) {
+function BriefingView({tasks,currentUser,onTaskTap,projects,users,subtasks}) {
   const isSuper=isSupervisorRole(currentUser.role,currentUser.isSupervisor);
   const myTasks=isSuper?tasks:tasks.filter(t=>t.assignee===currentUser.id);
   const overdue=myTasks.filter(t=>t.status==="overdue");
@@ -865,7 +868,7 @@ function BriefingView({tasks,currentUser,onTaskTap,projects,users}) {
   const active=sortByPriority(myTasks.filter(t=>t.status==="in-progress"&&!["P0","P1"].includes(t.priority)));
   const Section=({title,items,color})=>items.length===0?null:<div style={{marginBottom:20}}>
     <div style={{fontSize:12,fontWeight:700,color,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>{title} ({items.length})</div>
-    {items.map(t=><TaskCard key={t.id} task={t} onTap={onTaskTap} projects={projects} users={users}/>)}
+    {items.map(t=><TaskCard key={t.id} task={t} onTap={onTaskTap} projects={projects} users={users} subtasks={subtasks}/>)}
   </div>;
   return (
     <div>
@@ -882,7 +885,7 @@ function BriefingView({tasks,currentUser,onTaskTap,projects,users}) {
   );
 }
 
-function TasksView({tasks,currentUser,onTaskTap,projects,users,onAddTask}) {
+function TasksView({tasks,currentUser,onTaskTap,projects,users,onAddTask,subtasks}) {
   const isSuper=isSupervisorRole(currentUser.role,currentUser.isSupervisor);
   const [statusFilter,setStatusFilter]=useState("active");
   const [priFilter,setPriFilter]=useState("all");
@@ -906,12 +909,12 @@ function TasksView({tasks,currentUser,onTaskTap,projects,users,onAddTask}) {
       </div>
       <PriorityFilter active={priFilter} onChange={setPriFilter} tasks={baseTasks.filter(t=>t.status!=="done")}/>
       {filtered.length===0&&<div style={{textAlign:"center",padding:"30px",color:C.slate,fontSize:14}}>✅ Nothing here.</div>}
-      {filtered.map(t=><TaskCard key={t.id} task={t} onTap={onTaskTap} projects={projects} users={users}/>)}
+      {filtered.map(t=><TaskCard key={t.id} task={t} onTap={onTaskTap} projects={projects} users={users} subtasks={subtasks}/>)}
     </div>
   );
 }
 
-function ProjectsView({tasks,onTaskTap,projects,users,onAddTask}) {
+function ProjectsView({tasks,onTaskTap,projects,users,onAddTask,subtasks}) {
   const [selected,setSelected]=useState(null);
   if(selected){
     const proj=projects.find(p=>p.id===selected.id)||selected;
@@ -938,7 +941,7 @@ function ProjectsView({tasks,onTaskTap,projects,users,onAddTask}) {
           <button onClick={()=>onAddTask(proj.id)} style={{padding:"6px 12px",borderRadius:20,background:C.accent,color:"#fff",fontWeight:700,fontSize:12,border:"none",cursor:"pointer"}}>+ Add Task</button>
         </div>
         {projTasks.length===0&&<div style={{textAlign:"center",padding:"20px",color:C.slate,fontSize:13}}>✅ No open tasks.</div>}
-        {projTasks.map(t=><TaskCard key={t.id} task={t} onTap={onTaskTap} showProject={false} projects={projects} users={users}/>)}
+        {projTasks.map(t=><TaskCard key={t.id} task={t} onTap={onTaskTap} showProject={false} projects={projects} users={users} subtasks={subtasks}/>)}
       </div>
     );
   }
@@ -1067,9 +1070,9 @@ export default function App() {
   const visibleTabs=TABS.filter(t=>!t.adminOnly||isAdmin);
 
   const renderTab=()=>{
-    if(activeTab==="briefing") return <BriefingView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users}/>;
-    if(activeTab==="tasks")    return <TasksView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={()=>setAddTaskModal(true)}/>;
-    if(activeTab==="projects") return <ProjectsView tasks={tasks} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={(pid)=>setAddTaskModal(pid)}/>;
+    if(activeTab==="briefing") return <BriefingView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users} subtasks={subtasks}/>;
+    if(activeTab==="tasks")    return <TasksView tasks={tasks} currentUser={currentUser} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={()=>setAddTaskModal(true)} subtasks={subtasks}/>;
+    if(activeTab==="projects") return <ProjectsView tasks={tasks} onTaskTap={setTaskModal} projects={projects} users={users} onAddTask={(pid)=>setAddTaskModal(pid)} subtasks={subtasks}/>;
     if(activeTab==="admin")    return <AdminPanel currentUser={currentUser} users={users} onUserRoleChanged={handleUserRoleChanged} onUserDesignationChanged={handleUserDesignationChanged} onUserSupervisorChanged={handleUserSupervisorChanged} projects={projects} onProjectAdded={handleProjectAdded} onProjectEdited={handleProjectEdited}/>;
   };
 
