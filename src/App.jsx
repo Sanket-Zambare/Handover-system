@@ -686,6 +686,31 @@ function TaskModal({task,onSave,onClose,currentUser,projects,users,subtasks,allS
           {task.escalation==="awaiting_update"&&"📬 Update requested"}
           {task.escalation==="agenda"&&"📅 On next meeting agenda"}
         </div>}
+        <div style={{background:"#f5f3ff",border:"1.5px solid #ddd6fe",borderRadius:14,padding:"13px 14px",marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:subtasks.length>0?10:0}}>
+            <div style={{fontSize:12,fontWeight:800,color:"#6d28d9",textTransform:"uppercase",letterSpacing:"0.06em"}}>☑ Subtasks</div>
+            {subtasks.length>0&&<div style={{fontSize:12,fontWeight:700,color:"#6d28d9",background:"#ede9fe",padding:"2px 8px",borderRadius:20}}>{subtasks.filter(s=>s.status==="done").length}/{subtasks.length} done</div>}
+          </div>
+          {subtasks.map(s=>(
+            <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid #ddd6fe"}}>
+              <button onClick={()=>handleToggleSubtask(s)} style={{width:20,height:20,borderRadius:5,border:`2px solid ${s.status==="done"?"#7c3aed":"#a78bfa"}`,background:s.status==="done"?"#7c3aed":"#fff",color:"#fff",fontWeight:900,fontSize:12,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {s.status==="done"&&"✓"}
+              </button>
+              <span style={{flex:1,fontSize:13,color:s.status==="done"?"#a78bfa":"#3b1f6e",textDecoration:s.status==="done"?"line-through":"none",lineHeight:1.4}}>{s.title}</span>
+              <Av userId={s.assignee} users={users} size={22}/>
+              <button onClick={()=>handleDeleteSubtask(s.id)} style={{color:"#a78bfa",background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:"0 2px"}}>✕</button>
+            </div>
+          ))}
+          {subtasks.length===0&&<div style={{fontSize:12,color:"#a78bfa",marginBottom:8}}>No subtasks yet</div>}
+          <div style={{display:"flex",gap:6,marginTop:10}}>
+            <input value={newSubtitle} onChange={e=>setNewSubtitle(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAddSubtask()} placeholder="Add a subtask..." style={{flex:1,padding:"7px 10px",borderRadius:8,border:"1px solid #ddd6fe",fontSize:13,outline:"none",background:"#fff"}}/>
+            <select value={newSubAssignee} onChange={e=>setNewSubAssignee(e.target.value)} style={{padding:"7px 8px",borderRadius:8,border:"1px solid #ddd6fe",fontSize:12,background:"#fff",maxWidth:90}}>
+              <option value="">Anyone</option>
+              {users.map(u=><option key={u.id} value={u.id}>{u.shortName}</option>)}
+            </select>
+            <button onClick={handleAddSubtask} disabled={!newSubtitle.trim()||subSaving} style={{padding:"7px 13px",borderRadius:8,background:newSubtitle.trim()?"#7c3aed":"#ddd6fe",color:"#fff",fontWeight:700,fontSize:14,border:"none",cursor:newSubtitle.trim()?"pointer":"not-allowed"}}>+</button>
+          </div>
+        </div>
         <div style={{background:pri.bg,border:`1px solid ${pri.border}`,borderRadius:12,padding:"13px 14px",marginBottom:14}}>
           <div style={{fontSize:11,fontWeight:700,color:pri.color,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>⚡ Next Action</div>
           <div style={{fontSize:14,color:C.light,lineHeight:1.65}}>{task.nextAction}</div>
@@ -702,33 +727,6 @@ function TaskModal({task,onSave,onClose,currentUser,projects,users,subtasks,allS
           {statuses.map(s=><button key={s.key} onClick={()=>handleStatusChange(s.key)} style={{padding:"12px 8px",borderRadius:10,border:`2px solid ${status===s.key?s.color:C.border}`,background:status===s.key?s.color+"15":"#fff",color:status===s.key?s.color:C.slate,fontWeight:700,fontSize:13.5,cursor:"pointer"}}>{s.label}</button>)}
         </div>
         {isStuckNow&&<BlockerSelector blockerType={blockerType} blockerNote={blockerNote} onTypeChange={setBlockerType} onNoteChange={setBlockerNote}/>}
-        <div style={{marginBottom:14}}>
-          <div style={{fontSize:11,fontWeight:700,color:C.slate,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Subtasks {subtasks.length>0&&`(${subtasks.filter(s=>s.status==="done").length}/${subtasks.length})`}</div>
-          {subtasks.map(s=>(
-            <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-              <button onClick={()=>handleToggleSubtask(s)} style={{width:20,height:20,borderRadius:5,border:`2px solid ${s.status==="done"?C.green:C.border}`,background:s.status==="done"?C.green:"#fff",color:"#fff",fontWeight:900,fontSize:12,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {s.status==="done"&&"✓"}
-              </button>
-              <span style={{flex:1,fontSize:13,color:s.status==="done"?C.slate:C.mid,textDecoration:s.status==="done"?"line-through":"none",lineHeight:1.4}}>{s.title}</span>
-              <Av userId={s.assignee} users={users} size={22}/>
-              <button onClick={()=>handleDeleteSubtask(s.id)} style={{color:C.slate,background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:"0 2px"}}>✕</button>
-            </div>
-          ))}
-          <div style={{display:"flex",gap:6,marginTop:8}}>
-            <input
-              value={newSubtitle}
-              onChange={e=>setNewSubtitle(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&handleAddSubtask()}
-              placeholder="Add subtask..."
-              style={{flex:1,padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13,outline:"none"}}
-            />
-            <select value={newSubAssignee} onChange={e=>setNewSubAssignee(e.target.value)} style={{padding:"7px 8px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:12,background:"#fff",maxWidth:90}}>
-              <option value="">Anyone</option>
-              {users.map(u=><option key={u.id} value={u.id}>{u.shortName}</option>)}
-            </select>
-            <button onClick={handleAddSubtask} disabled={!newSubtitle.trim()||subSaving} style={{padding:"7px 12px",borderRadius:8,background:newSubtitle.trim()?C.accent:C.border,color:"#fff",fontWeight:700,fontSize:14,border:"none",cursor:newSubtitle.trim()?"pointer":"not-allowed"}}>+</button>
-          </div>
-        </div>
         <textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Add context or note for the team..." style={{...taStyle,height:70,marginBottom:14}}/>
         {isSupervisor&&<>
           <button onClick={()=>setShowEsc(!showEsc)} style={{width:"100%",padding:"11px",borderRadius:10,border:`1px solid ${C.border}`,background:showEsc?"#fff7ed":"#fff",color:C.orange,fontWeight:700,fontSize:14,cursor:"pointer",marginBottom:showEsc?12:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>🛡 Escalation Options {showEsc?"▲":"▼"}</button>
