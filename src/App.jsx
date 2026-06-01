@@ -1088,9 +1088,9 @@ export default function App() {
   if(!session) return showSignUp
     ? <SignUpScreen onSwitch={()=>setShowSignUp(false)}/>
     : <LoginScreen onSwitch={()=>setShowSignUp(true)}/>;
-  if(!currentUser) return <div style={{minHeight:"100vh",background:C.navy,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+  if(!currentUser) return <div style={{minHeight:"100vh",background:C.navy,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16,padding:24}}>
     <div style={{color:"#fff",fontSize:16}}>Account not set up yet.</div>
-    <div style={{color:"rgba(255,255,255,0.5)",fontSize:13,textAlign:"center",maxWidth:300}}>Ask admin to add your record to the users table with your auth_id.</div>
+    <div style={{color:"rgba(255,255,255,0.4)",fontSize:11,textAlign:"center",maxWidth:340,wordBreak:"break-all"}}>Session UID: {session?.user?.id}<br/>Email: {session?.user?.email}</div>
     <button onClick={handleLogout} style={{padding:"10px 20px",borderRadius:9,background:"rgba(255,255,255,0.1)",color:"#fff",border:"none",cursor:"pointer",fontWeight:700}}>Sign Out</button>
   </div>;
 
