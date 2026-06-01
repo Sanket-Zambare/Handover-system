@@ -1028,6 +1028,10 @@ export default function App() {
       let loadedUsers=(usersRes.data||[]).map(mapUser);
       let me=loadedUsers.find(u=>u.authId===session.user.id);
       if(!me){
+        const{data:directRow}=await supabase.from("users").select("*").eq("auth_id",session.user.id).maybeSingle();
+        if(directRow){me=mapUser(directRow);if(!loadedUsers.find(u=>u.id===me.id))loadedUsers=[...loadedUsers,me];}
+      }
+      if(!me){
         const au=session.user;
         const email=(au.email||"").toLowerCase();
         const existingByEmail=loadedUsers.find(u=>u.email===email);
