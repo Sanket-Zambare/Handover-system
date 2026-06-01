@@ -1018,14 +1018,42 @@ export default function App() {
       ]);
       const loadErr=usersRes.error||tasksRes.error||projectsRes.error||subtasksRes.error;
       if(loadErr){
+        const is401=loadErr.status===401||loadErr.code==="PGRST301"||String(loadErr.message).includes("JWT");
+        if(is401){await supabase.auth.signOut();return;}
         setToast({msg:"Failed to load data: "+loadErr.message,color:C.red});
         setTimeout(()=>setToast(null),4000);
         setLoading(false);
         return;
       }
-      const loadedUsers=(usersRes.data||[]).map(mapUser);
+      let loadedUsers=(usersRes.data||[]).map(mapUser);
+      let me=loadedUsers.find(u=>u.authId===session.user.id);
+      if(!me){
+        const au=session.user;
+        const email=(au.email||"").toLowerCase();
+        const existingByEmail=loadedUsers.find(u=>u.email===email);
+        if(existingByEmail){
+          await supabase.from("users").update({auth_id:au.id}).eq("id",existingByEmail.id);
+          me={...existingByEmail,authId:au.id};
+          loadedUsers=loadedUsers.map(u=>u.id===me.id?me:u);
+        } else {
+          const meta=au.user_metadata||{};
+          const namePart=email.split("@")[0];
+          const colors=["#3b82f6","#8b5cf6","#10b981","#f97316","#ec4899","#14b8a6","#f59e0b","#0ea5e9"];
+          const color=colors[Math.abs(namePart.split("").reduce((a,c)=>a+c.charCodeAt(0),0))%8];
+          const newRow={
+            auth_id:au.id,email,
+            name:meta.name||namePart,short_name:meta.short_name||namePart,
+            initials:meta.initials||namePart.slice(0,2).toUpperCase(),
+            color:meta.color||color,role:"member",is_supervisor:false,
+          };
+          const{data:inserted,error:insertErr}=await supabase.from("users").insert(newRow).select().single();
+          if(!insertErr&&inserted){
+            me=mapUser(inserted);
+            loadedUsers=[...loadedUsers,me].sort((a,b)=>(a.shortName||"").localeCompare(b.shortName||""));
+          }
+        }
+      }
       setUsers(loadedUsers);
-      const me=loadedUsers.find(u=>u.authId===session.user.id);
       setCurrentUser(me||null);
       if(tasksRes.data) setTasks(tasksRes.data.map(mapTask));
       if(projectsRes.data) setProjects(projectsRes.data.map(mapProject));
